@@ -1,61 +1,74 @@
-const express = require("express");
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import path from 'path';
+import Message from './models/Message.js';
+import cors from "cors";
+
+dotenv.config();
 const app = express();
-const port = process.env.PORT || 3001;
+const server = http.createServer(app);
 
-app.get("/", (req, res) => res.type('html').send(html));
+app.use(cors({
+  origin: ["http://localhost:3001"], // Next.js dev URL
+  methods: ["GET", "POST"],
+  credentials: true
+}));
 
-const server = app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+const io = new Server(server, {
+    cors: {
+    origin: ["http://localhost:3001"],
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
+const __dirname = path.resolve();
 
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 120 * 1000;
+// ✅ Setup Socket.IO with CORS
 
-const html = `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Hello from Render!</title>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
-    <script>
-      setTimeout(() => {
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          disableForReducedMotion: true
-        });
-      }, 500);
-    </script>
-    <style>
-      @import url("https://p.typekit.net/p.css?s=1&k=vnd5zic&ht=tk&f=39475.39476.39477.39478.39479.39480.39481.39482&a=18673890&app=typekit&e=css");
-      @font-face {
-        font-family: "neo-sans";
-        src: url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/l?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff2"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/d?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/a?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("opentype");
-        font-style: normal;
-        font-weight: 700;
-      }
-      html {
-        font-family: neo-sans;
-        font-weight: 700;
-        font-size: calc(62rem / 16);
-      }
-      body {
-        background: white;
-      }
-      section {
-        border-radius: 1em;
-        padding: 1em;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        margin-right: -50%;
-        transform: translate(-50%, -50%);
-      }
-    </style>
-  </head>
-  <body>
-    <section>
-      Hello from Render!
-    </section>
-  </body>
-</html>
-`
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch((err) => console.error('❌ MongoDB error:', err));
+
+// Serve static frontend
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+io.on('connection', async (socket) => {
+  console.log('🟢 New client connected:', socket.id);
+
+
+  // Send recent messages to client
+  
+  socket.on('loadUserMessages', async (userName)=>{
+    const messages = await Message.find({sessionId : userName}).sort({ createdAt: -1 }).limit(50);
+
+    socket.emit('chatHistory', messages);
+  })
+
+  // Listen for new messages
+  socket.on('chatMessage', async (msgData) => {
+    const newMsg = new Message(msgData);
+    await newMsg.save();
+    socket.emit('chatMessage', newMsg);
+    io.emit("newMessageForAdmin", newMsg);
+  });
+
+    socket.on("loadAllChats", async () => {
+    const allMsgs = await Message.find().sort({ createdAt: -1 });
+    socket.emit("allChats", allMsgs);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('🔴 Client disconnected:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
